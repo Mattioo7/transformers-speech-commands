@@ -33,6 +33,7 @@ class DataFixedParams:
 @dataclass(frozen=True)
 class DataGridParams:
     train_fraction: float | list[float] = 1.0
+    validation_fraction: float | list[float] = 1.0
     test_fraction: float | list[float] = 1.0
     unknown_fraction: float | list[float] = 1.0
     silence_examples_per_split: int | list[int] = 2_000
@@ -72,6 +73,9 @@ class FitFixedParams:
     progress_backend: ProgressBackend = "terminal"
     verbose: bool = True
     log_every: int = 20
+    early_stopping: bool = True
+    early_stopping_patience: int = 3
+    early_stopping_min_delta: float = 0.0
 
 
 @dataclass(frozen=True)

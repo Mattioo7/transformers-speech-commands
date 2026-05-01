@@ -12,11 +12,22 @@ from .config import DataFixedParams, FeatureFixedParams, LABEL_TO_ID, UNKNOWN_LA
 
 
 @dataclass(frozen=True)
+class PreparedDataFiles:
+    manifest: pd.DataFrame
+    train_manifest: pd.DataFrame
+    validation_manifest: pd.DataFrame
+    test_manifest: pd.DataFrame
+    local_paths: dict[str, Path]
+
+
+@dataclass(frozen=True)
 class PreparedData:
     manifest: pd.DataFrame
     train_manifest: pd.DataFrame
+    validation_manifest: pd.DataFrame
     test_manifest: pd.DataFrame
     train_dataset: Dataset
+    validation_dataset: Dataset
     test_dataset: Dataset
 
 
@@ -82,7 +93,7 @@ def add_silence_examples(
 
     noise_paths = background_noise_paths(data_params)
     rows = []
-    for split in ("train", "test"):
+    for split in ("train", "validation", "test"):
         for index in range(examples_per_split):
             path = noise_paths[index % len(noise_paths)]
             rows.append(
@@ -125,6 +136,7 @@ def sample_split(
 def build_experiment_manifest(
     data_params: DataFixedParams,
     train_fraction: float,
+    validation_fraction: float,
     test_fraction: float,
     unknown_fraction: float,
     silence_examples_per_split: int,
@@ -134,8 +146,9 @@ def build_experiment_manifest(
     manifest = add_silence_examples(manifest, data_params, silence_examples_per_split)
 
     train_manifest = sample_split(manifest, "train", train_fraction, unknown_fraction, seed)
+    validation_manifest = sample_split(manifest, "validation", validation_fraction, unknown_fraction, seed)
     test_manifest = sample_split(manifest, "test", test_fraction, unknown_fraction, seed)
-    return pd.concat([train_manifest, test_manifest], ignore_index=True)
+    return pd.concat([train_manifest, validation_manifest, test_manifest], ignore_index=True)
 
 
 def pad_or_trim(waveform: torch.Tensor, target_length: int, segment_index: int = 0) -> torch.Tensor:
@@ -192,11 +205,12 @@ class SpeechCommandsDataset(Dataset):
         return features, torch.tensor(LABEL_TO_ID[row.label], dtype=torch.long)
 
 
-def prepare_experiment_data(experiment, data_grid: dict) -> PreparedData:
+def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFiles:
     data_params = experiment.data_fixed
     manifest = build_experiment_manifest(
         data_params=data_params,
         train_fraction=data_grid["train_fraction"],
+        validation_fraction=data_grid["validation_fraction"],
         test_fraction=data_grid["test_fraction"],
         unknown_fraction=data_grid["unknown_fraction"],
         silence_examples_per_split=data_grid["silence_examples_per_split"],
@@ -208,17 +222,53 @@ def prepare_experiment_data(experiment, data_grid: dict) -> PreparedData:
     local_paths = extract_archive_files(archive, [Path(path) for path in manifest["archive_path"]], cache_dir)
 
     train_manifest = manifest[manifest["split"] == "train"]
+    validation_manifest = manifest[manifest["split"] == "validation"]
     test_manifest = manifest[manifest["split"] == "test"]
-    train_dataset = SpeechCommandsDataset(train_manifest, local_paths, data_params, experiment.feature_fixed)
-    test_dataset = SpeechCommandsDataset(test_manifest, local_paths, data_params, experiment.feature_fixed)
 
-    return PreparedData(
+    return PreparedDataFiles(
         manifest=manifest,
         train_manifest=train_manifest,
+        validation_manifest=validation_manifest,
         test_manifest=test_manifest,
+        local_paths=local_paths,
+    )
+
+
+def build_datasets_from_prepared_files(experiment, prepared_files: PreparedDataFiles) -> PreparedData:
+    data_params = experiment.data_fixed
+    train_dataset = SpeechCommandsDataset(
+        prepared_files.train_manifest,
+        prepared_files.local_paths,
+        data_params,
+        experiment.feature_fixed,
+    )
+    validation_dataset = SpeechCommandsDataset(
+        prepared_files.validation_manifest,
+        prepared_files.local_paths,
+        data_params,
+        experiment.feature_fixed,
+    )
+    test_dataset = SpeechCommandsDataset(
+        prepared_files.test_manifest,
+        prepared_files.local_paths,
+        data_params,
+        experiment.feature_fixed,
+    )
+
+    return PreparedData(
+        manifest=prepared_files.manifest,
+        train_manifest=prepared_files.train_manifest,
+        validation_manifest=prepared_files.validation_manifest,
+        test_manifest=prepared_files.test_manifest,
         train_dataset=train_dataset,
+        validation_dataset=validation_dataset,
         test_dataset=test_dataset,
     )
+
+
+def prepare_experiment_data(experiment, data_grid: dict) -> PreparedData:
+    prepared_files = prepare_experiment_data_files(experiment, data_grid)
+    return build_datasets_from_prepared_files(experiment, prepared_files)
 
 
 def make_dataloaders(
@@ -226,7 +276,7 @@ def make_dataloaders(
     experiment,
     data_grid: dict,
     fit_grid: dict,
-) -> tuple[DataLoader, DataLoader]:
+) -> tuple[DataLoader, DataLoader, DataLoader]:
     sampler = None
     shuffle = True
     if data_grid["sampling_strategy"] == "class_balanced":
@@ -243,6 +293,13 @@ def make_dataloaders(
         num_workers=experiment.fit_fixed.num_workers,
         pin_memory=experiment.fit_fixed.pin_memory,
     )
+    validation_loader = DataLoader(
+        prepared_data.validation_dataset,
+        batch_size=fit_grid["batch_size"],
+        shuffle=False,
+        num_workers=experiment.fit_fixed.num_workers,
+        pin_memory=experiment.fit_fixed.pin_memory,
+    )
     test_loader = DataLoader(
         prepared_data.test_dataset,
         batch_size=fit_grid["batch_size"],
@@ -251,4 +308,4 @@ def make_dataloaders(
         pin_memory=experiment.fit_fixed.pin_memory,
     )
 
-    return train_loader, test_loader
+    return train_loader, validation_loader, test_loader

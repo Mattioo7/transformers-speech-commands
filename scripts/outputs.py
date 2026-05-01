@@ -28,7 +28,7 @@ def run_name(run: dict[str, Any]) -> str:
     data = run["data"]
     fit = run["fit"]
     return slugify(
-        f"{model_name_for_path(model['model_type'])}_train{data['train_fraction']}_test{data['test_fraction']}_lr{fit['learning_rate']}_seed{data['seed']}"
+        f"{model_name_for_path(model['model_type'])}_train{data['train_fraction']}_val{data['validation_fraction']}_test{data['test_fraction']}_lr{fit['learning_rate']}_seed{data['seed']}"
     )
 
 
@@ -51,15 +51,16 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
 
 def save_history_plot(history: list[dict[str, float]], path: Path) -> None:
     data = pd.DataFrame(history)
+    evaluation_split = "validation" if "validation_loss" in data.columns else "test"
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
     axes[0].plot(data["epoch"], data["train_loss"], label="train")
-    axes[0].plot(data["epoch"], data["test_loss"], label="test")
+    axes[0].plot(data["epoch"], data[f"{evaluation_split}_loss"], label=evaluation_split)
     axes[0].set_title("Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].legend()
 
     axes[1].plot(data["epoch"], data["train_accuracy"], label="train")
-    axes[1].plot(data["epoch"], data["test_accuracy"], label="test")
+    axes[1].plot(data["epoch"], data[f"{evaluation_split}_accuracy"], label=evaluation_split)
     axes[1].set_title("Accuracy")
     axes[1].set_xlabel("Epoch")
     axes[1].legend()

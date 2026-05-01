@@ -6,7 +6,13 @@ import pandas as pd
 import torch
 
 from .config import Experiment, LABEL_ORDER, expand_experiment_grid
-from .data import PreparedData, make_dataloaders, prepare_experiment_data
+from .data import (
+    PreparedData,
+    PreparedDataFiles,
+    build_datasets_from_prepared_files,
+    make_dataloaders,
+    prepare_experiment_data_files,
+)
 from .models import build_model
 from .outputs import output_paths, run_name, save_confusion_matrix_plot, save_history_plot, save_json
 from .progress import stage
@@ -34,27 +40,23 @@ def describe_run(run: dict[str, Any], index: int, total: int) -> str:
 
 
 def split_summary(manifest: pd.DataFrame) -> str:
-    train_count = int((manifest["split"] == "train").sum())
-    test_count = int((manifest["split"] == "test").sum())
-    train_distribution = (
-        manifest.loc[manifest["split"] == "train", "label"]
-        .value_counts()
-        .sort_index()
-    )
-    test_distribution = (
-        manifest.loc[manifest["split"] == "test", "label"]
-        .value_counts()
+    splits = ("train", "validation", "test")
+    counts = manifest["split"].value_counts().reindex(splits, fill_value=0)
+    distribution = (
+        pd.crosstab(manifest["label"], manifest["split"])
+        .reindex(columns=splits, fill_value=0)
         .sort_index()
     )
 
     lines = [
-        f"  -> TRAIN split | samples: {train_count}",
-        "     class distribution:",
+        "  -> samples | " + " | ".join(f"{split}={counts[split]}" for split in splits),
+        "     class        train  validation  test",
     ]
-    lines.extend(f"       - {label}: {count}" for label, count in train_distribution.items())
-    lines.append(f"  -> TEST split | samples: {test_count}")
-    lines.append("     class distribution:")
-    lines.extend(f"       - {label}: {count}" for label, count in test_distribution.items())
+    for label, row in distribution.iterrows():
+        lines.append(
+            f"     {label:<10} {row['train']:>6} {row['validation']:>11} {row['test']:>5}"
+        )
+
     return "\n".join(lines)
 
 
@@ -62,7 +64,10 @@ def data_key(run: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return tuple(sorted(run["data"].items()))
 
 
-def prepare_data_for_runs(experiment: Experiment, runs: list[dict[str, Any]]) -> dict[tuple[tuple[str, Any], ...], PreparedData]:
+def prepare_data_files_for_runs(
+    experiment: Experiment,
+    runs: list[dict[str, Any]],
+) -> dict[tuple[tuple[str, Any], ...], PreparedDataFiles]:
     prepared = {}
     data_configs = []
 
@@ -78,11 +83,34 @@ def prepare_data_for_runs(experiment: Experiment, runs: list[dict[str, Any]]) ->
             stage(f"DATA configuration {index}/{len(data_configs)}", enabled=experiment.fit_fixed.verbose)
 
         data_run = {"data": data_config}
-        prepared_data = prepare_experiment_data(experiment, data_config)
-        prepared[data_key(data_run)] = prepared_data
-        stage(split_summary(prepared_data.manifest), enabled=experiment.fit_fixed.verbose)
+        prepared_files = prepare_experiment_data_files(experiment, data_config)
+        prepared[data_key(data_run)] = prepared_files
+        stage(split_summary(prepared_files.manifest), enabled=experiment.fit_fixed.verbose)
 
     return prepared
+
+
+def build_data_for_runs(
+    experiment: Experiment,
+    prepared_files_by_key: dict[tuple[tuple[str, Any], ...], PreparedDataFiles],
+) -> dict[tuple[tuple[str, Any], ...], PreparedData]:
+    return {
+        key: build_datasets_from_prepared_files(experiment, prepared_files)
+        for key, prepared_files in prepared_files_by_key.items()
+    }
+
+
+def prepare_data_for_runs(
+    experiment: Experiment,
+    runs: list[dict[str, Any]],
+) -> dict[tuple[tuple[str, Any], ...], PreparedData]:
+    prepared_files_by_key = prepare_data_files_for_runs(experiment, runs)
+    return build_data_for_runs(experiment, prepared_files_by_key)
+
+
+def prepare_experiment_datasets(experiment: Experiment) -> dict[tuple[tuple[str, Any], ...], PreparedDataFiles]:
+    runs = expand_experiment_grid(experiment)
+    return prepare_data_files_for_runs(experiment, runs)
 
 
 def run_single_config(
@@ -100,12 +128,24 @@ def run_single_config(
     paths = output_paths(experiment, run)
     save_json(paths["configs"] / "config.json", {"experiment": experiment.name, **run})
 
-    train_loader, test_loader = make_dataloaders(prepared_data, experiment, run["data"], run["fit"])
+    train_loader, validation_loader, test_loader = make_dataloaders(
+        prepared_data,
+        experiment,
+        run["data"],
+        run["fit"],
+    )
     prepared_data.manifest.to_csv(paths["metrics"] / "manifest.csv", index=False)
 
     model = build_model(run["model"], experiment.feature_fixed, len(LABEL_ORDER))
     stage("\nTraining model", enabled=experiment.fit_fixed.verbose)
-    history, final_metrics = fit_model(model, train_loader, test_loader, run["fit"], experiment.fit_fixed)
+    history, final_metrics = fit_model(
+        model,
+        train_loader,
+        validation_loader,
+        test_loader,
+        run["fit"],
+        experiment.fit_fixed,
+    )
 
     summary = metrics_summary(history, final_metrics)
     pd.DataFrame(history).to_csv(paths["metrics"] / "history.csv", index=False)
@@ -120,10 +160,16 @@ def run_single_config(
     return {"run": name, **summary}
 
 
-def run_experiment(experiment: Experiment) -> pd.DataFrame:
+def train_experiment(
+    experiment: Experiment,
+    prepared_files_by_key: dict[tuple[tuple[str, Any], ...], PreparedDataFiles] | None = None,
+) -> pd.DataFrame:
     stage(f"Starting experiment: {experiment.name}", enabled=experiment.fit_fixed.verbose)
     runs = expand_experiment_grid(experiment)
-    prepared_data_by_key = prepare_data_for_runs(experiment, runs)
+    if prepared_files_by_key is None:
+        prepared_files_by_key = prepare_data_files_for_runs(experiment, runs)
+
+    prepared_data_by_key = build_data_for_runs(experiment, prepared_files_by_key)
     results = [
         run_single_config(experiment, run, prepared_data_by_key[data_key(run)], index, len(runs))
         for index, run in enumerate(runs, start=1)
@@ -134,3 +180,7 @@ def run_experiment(experiment: Experiment) -> pd.DataFrame:
     summary.to_csv(output_dir / "experiment_summary.csv", index=False)
     stage(f"\nExperiment finished | total runs = {len(runs)}", enabled=experiment.fit_fixed.verbose)
     return summary
+
+
+def run_experiment(experiment: Experiment) -> pd.DataFrame:
+    return train_experiment(experiment)

@@ -14,7 +14,8 @@ from .config import (
     experiment_grid_dataframe,
     expand_experiment_grid,
 )
-from .runner import run_experiment
+from .data import PreparedDataFiles, build_datasets_from_prepared_files, prepare_experiment_data_files
+from .runner import prepare_experiment_datasets, run_experiment, train_experiment
 
 __all__ = [
     "DataFixedParams",
@@ -26,10 +27,15 @@ __all__ = [
     "LABEL_ORDER",
     "LABEL_TO_ID",
     "ModelGridParams",
+    "PreparedDataFiles",
     "SILENCE_LABEL",
     "TARGET_LABEL_ORDER",
     "UNKNOWN_LABEL",
+    "build_datasets_from_prepared_files",
     "experiment_grid_dataframe",
     "expand_experiment_grid",
+    "prepare_experiment_data_files",
+    "prepare_experiment_datasets",
     "run_experiment",
+    "train_experiment",
 ]
