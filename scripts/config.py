@@ -64,7 +64,7 @@ class ModelGridParams:
 
 @dataclass(frozen=True)
 class FitFixedParams:
-    device: Device = "auto"
+    device: Device = "cpu"
     num_workers: int = 0
     pin_memory: bool = False
     log_every: int = 20

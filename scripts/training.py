@@ -1,4 +1,6 @@
 from typing import Any
+import subprocess
+import warnings
 
 import numpy as np
 import torch
@@ -8,9 +10,62 @@ from torch.utils.data import DataLoader
 from .config import Device, FitFixedParams
 
 
+def pytorch_supported_cuda_arches() -> list[int]:
+    return [
+        int(arch.removeprefix("sm_"))
+        for arch in torch.cuda.get_arch_list()
+        if arch.startswith("sm_")
+    ]
+
+
+def nvidia_smi_device_arch() -> int | None:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    first_device = result.stdout.splitlines()[0].strip()
+    major, minor = first_device.split(".", 1)
+    return int(major) * 10 + int(minor)
+
+
+def cuda_supports_current_device() -> bool:
+    device_arch = nvidia_smi_device_arch()
+    supported_arches = pytorch_supported_cuda_arches()
+
+    if device_arch is not None:
+        return device_arch in supported_arches and torch.cuda.is_available()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+
+        if not torch.cuda.is_available():
+            return False
+
+        try:
+            major, minor = torch.cuda.get_device_capability()
+            current_arch = major * 10 + minor
+        except RuntimeError:
+            return False
+
+    return any(current_arch == arch for arch in supported_arches)
+
+
 def resolve_device(device: Device) -> torch.device:
     if device == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device("cuda" if cuda_supports_current_device() else "cpu")
+
+    if device == "cuda" and not cuda_supports_current_device():
+        raise RuntimeError(
+            "CUDA was requested, but the installed PyTorch build does not support this GPU. "
+            "Use FitFixedParams(device='cpu') or install a PyTorch build compatible with your GPU."
+        )
+
     return torch.device(device)
 
 
