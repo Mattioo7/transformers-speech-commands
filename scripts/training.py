@@ -198,7 +198,7 @@ def fit_model(
         device,
     )
     elapsed = time.perf_counter() - start_time
-    stage(f"Training finished in {elapsed:.2f} seconds", enabled=fixed_params.verbose)
+    stage(f"Training finished in {elapsed:.2f} seconds\n\n", enabled=fixed_params.verbose)
     return history, final_metrics
 
 

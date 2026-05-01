@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 
 from .config import Experiment, LABEL_ORDER, expand_experiment_grid
-from .data import make_dataloaders
+from .data import PreparedData, make_dataloaders, prepare_experiment_data
 from .models import build_model
 from .outputs import output_paths, run_name, save_confusion_matrix_plot, save_history_plot, save_json
 from .progress import stage
@@ -36,10 +36,55 @@ def describe_run(run: dict[str, Any], index: int, total: int) -> str:
 def split_summary(manifest: pd.DataFrame) -> str:
     train_count = int((manifest["split"] == "train").sum())
     test_count = int((manifest["split"] == "test").sum())
-    return f"  -> TRAIN split | samples: {train_count}\n  -> TEST split | samples: {test_count}"
+    train_distribution = (
+        manifest.loc[manifest["split"] == "train", "label"]
+        .value_counts()
+        .sort_index()
+    )
+
+    lines = [
+        f"  -> TRAIN split | samples: {train_count}",
+        "     class distribution:",
+    ]
+    lines.extend(f"       - {label}: {count}" for label, count in train_distribution.items())
+    lines.append(f"  -> TEST split | samples: {test_count}")
+    return "\n".join(lines)
 
 
-def run_single_config(experiment: Experiment, run: dict[str, Any], index: int, total: int) -> dict[str, Any]:
+def data_key(run: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    return tuple(sorted(run["data"].items()))
+
+
+def prepare_data_for_runs(experiment: Experiment, runs: list[dict[str, Any]]) -> dict[tuple[tuple[str, Any], ...], PreparedData]:
+    prepared = {}
+    data_configs = []
+
+    for run in runs:
+        key = data_key(run)
+        if key not in prepared:
+            prepared[key] = None
+            data_configs.append(run["data"])
+
+    stage("\nBuilding dataset", enabled=experiment.fit_fixed.verbose)
+    for index, data_config in enumerate(data_configs, start=1):
+        if len(data_configs) > 1:
+            stage(f"DATA configuration {index}/{len(data_configs)}", enabled=experiment.fit_fixed.verbose)
+
+        data_run = {"data": data_config}
+        prepared_data = prepare_experiment_data(experiment, data_config)
+        prepared[data_key(data_run)] = prepared_data
+        stage(split_summary(prepared_data.manifest), enabled=experiment.fit_fixed.verbose)
+
+    return prepared
+
+
+def run_single_config(
+    experiment: Experiment,
+    run: dict[str, Any],
+    prepared_data: PreparedData,
+    index: int,
+    total: int,
+) -> dict[str, Any]:
     name = run_name(run)
     stage(describe_run(run, index, total), enabled=experiment.fit_fixed.verbose)
     torch.manual_seed(run["data"]["seed"])
@@ -48,10 +93,8 @@ def run_single_config(experiment: Experiment, run: dict[str, Any], index: int, t
     paths = output_paths(experiment, run)
     save_json(paths["configs"] / "config.json", {"experiment": experiment.name, **run})
 
-    stage("\nBuilding dataset", enabled=experiment.fit_fixed.verbose)
-    train_loader, test_loader, manifest = make_dataloaders(experiment, run["data"], run["fit"])
-    stage(split_summary(manifest), enabled=experiment.fit_fixed.verbose)
-    manifest.to_csv(paths["metrics"] / "manifest.csv", index=False)
+    train_loader, test_loader = make_dataloaders(prepared_data, experiment, run["data"], run["fit"])
+    prepared_data.manifest.to_csv(paths["metrics"] / "manifest.csv", index=False)
 
     model = build_model(run["model"], experiment.feature_fixed, len(LABEL_ORDER))
     stage("\nTraining model", enabled=experiment.fit_fixed.verbose)
@@ -73,7 +116,11 @@ def run_single_config(experiment: Experiment, run: dict[str, Any], index: int, t
 def run_experiment(experiment: Experiment) -> pd.DataFrame:
     stage(f"Starting experiment: {experiment.name}", enabled=experiment.fit_fixed.verbose)
     runs = expand_experiment_grid(experiment)
-    results = [run_single_config(experiment, run, index, len(runs)) for index, run in enumerate(runs, start=1)]
+    prepared_data_by_key = prepare_data_for_runs(experiment, runs)
+    results = [
+        run_single_config(experiment, run, prepared_data_by_key[data_key(run)], index, len(runs))
+        for index, run in enumerate(runs, start=1)
+    ]
     summary = pd.DataFrame(results)
     output_dir = Path(experiment.data_fixed.output_dir) / experiment.name
     output_dir.mkdir(parents=True, exist_ok=True)

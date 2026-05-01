@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import dataclass
 import math
 
 import pandas as pd
@@ -8,6 +9,15 @@ import torchaudio
 
 from .archive import archive_files, archive_lines, extract_archive_files
 from .config import DataFixedParams, FeatureFixedParams, LABEL_TO_ID, UNKNOWN_LABEL
+
+
+@dataclass(frozen=True)
+class PreparedData:
+    manifest: pd.DataFrame
+    train_manifest: pd.DataFrame
+    test_manifest: pd.DataFrame
+    train_dataset: Dataset
+    test_dataset: Dataset
 
 
 def train_audio_label(path: Path) -> str | None:
@@ -182,7 +192,7 @@ class SpeechCommandsDataset(Dataset):
         return features, torch.tensor(LABEL_TO_ID[row.label], dtype=torch.long)
 
 
-def make_dataloaders(experiment, data_grid: dict, fit_grid: dict) -> tuple[DataLoader, DataLoader, pd.DataFrame]:
+def prepare_experiment_data(experiment, data_grid: dict) -> PreparedData:
     data_params = experiment.data_fixed
     manifest = build_experiment_manifest(
         data_params=data_params,
@@ -202,16 +212,31 @@ def make_dataloaders(experiment, data_grid: dict, fit_grid: dict) -> tuple[DataL
     train_dataset = SpeechCommandsDataset(train_manifest, local_paths, data_params, experiment.feature_fixed)
     test_dataset = SpeechCommandsDataset(test_manifest, local_paths, data_params, experiment.feature_fixed)
 
+    return PreparedData(
+        manifest=manifest,
+        train_manifest=train_manifest,
+        test_manifest=test_manifest,
+        train_dataset=train_dataset,
+        test_dataset=test_dataset,
+    )
+
+
+def make_dataloaders(
+    prepared_data: PreparedData,
+    experiment,
+    data_grid: dict,
+    fit_grid: dict,
+) -> tuple[DataLoader, DataLoader]:
     sampler = None
     shuffle = True
     if data_grid["sampling_strategy"] == "class_balanced":
-        label_counts = train_manifest["label"].value_counts().to_dict()
-        weights = [1.0 / label_counts[label] for label in train_manifest["label"]]
+        label_counts = prepared_data.train_manifest["label"].value_counts().to_dict()
+        weights = [1.0 / label_counts[label] for label in prepared_data.train_manifest["label"]]
         sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
         shuffle = False
 
     train_loader = DataLoader(
-        train_dataset,
+        prepared_data.train_dataset,
         batch_size=fit_grid["batch_size"],
         shuffle=shuffle,
         sampler=sampler,
@@ -219,11 +244,11 @@ def make_dataloaders(experiment, data_grid: dict, fit_grid: dict) -> tuple[DataL
         pin_memory=experiment.fit_fixed.pin_memory,
     )
     test_loader = DataLoader(
-        test_dataset,
+        prepared_data.test_dataset,
         batch_size=fit_grid["batch_size"],
         shuffle=False,
         num_workers=experiment.fit_fixed.num_workers,
         pin_memory=experiment.fit_fixed.pin_memory,
     )
 
-    return train_loader, test_loader, manifest
+    return train_loader, test_loader
