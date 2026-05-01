@@ -67,6 +67,7 @@ class FitFixedParams:
     device: Device = "cpu"
     num_workers: int = 0
     pin_memory: bool = False
+    use_tqdm: bool = True
     log_every: int = 20
 
 

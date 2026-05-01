@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from tqdm.auto import tqdm
 
 from .config import Experiment, LABEL_ORDER, expand_experiment_grid
 from .data import make_dataloaders
@@ -39,7 +40,9 @@ def run_single_config(experiment: Experiment, run: dict[str, Any]) -> dict[str, 
 
 
 def run_experiment(experiment: Experiment) -> pd.DataFrame:
-    results = [run_single_config(experiment, run) for run in expand_experiment_grid(experiment)]
+    runs = expand_experiment_grid(experiment)
+    iterator = tqdm(runs, desc=experiment.name) if experiment.fit_fixed.use_tqdm else runs
+    results = [run_single_config(experiment, run) for run in iterator]
     summary = pd.DataFrame(results)
     output_dir = Path(experiment.data_fixed.output_dir) / experiment.name
     output_dir.mkdir(parents=True, exist_ok=True)
