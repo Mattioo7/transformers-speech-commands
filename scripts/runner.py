@@ -41,6 +41,11 @@ def split_summary(manifest: pd.DataFrame) -> str:
         .value_counts()
         .sort_index()
     )
+    test_distribution = (
+        manifest.loc[manifest["split"] == "test", "label"]
+        .value_counts()
+        .sort_index()
+    )
 
     lines = [
         f"  -> TRAIN split | samples: {train_count}",
@@ -48,6 +53,8 @@ def split_summary(manifest: pd.DataFrame) -> str:
     ]
     lines.extend(f"       - {label}: {count}" for label, count in train_distribution.items())
     lines.append(f"  -> TEST split | samples: {test_count}")
+    lines.append("     class distribution:")
+    lines.extend(f"       - {label}: {count}" for label, count in test_distribution.items())
     return "\n".join(lines)
 
 

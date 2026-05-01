@@ -16,12 +16,19 @@ def slugify(value: str) -> str:
     return value.strip("_")
 
 
+def model_name_for_path(model_type: str) -> str:
+    aliases = {
+        "transformer": "trfm",
+    }
+    return aliases.get(model_type, model_type)
+
+
 def run_name(run: dict[str, Any]) -> str:
     model = run["model"]
     data = run["data"]
     fit = run["fit"]
     return slugify(
-        f"{model['model_type']}_train{data['train_fraction']}_test{data['test_fraction']}_lr{fit['learning_rate']}_seed{data['seed']}"
+        f"{model_name_for_path(model['model_type'])}_train{data['train_fraction']}_test{data['test_fraction']}_lr{fit['learning_rate']}_seed{data['seed']}"
     )
 
 
