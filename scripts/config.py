@@ -13,6 +13,7 @@ ID_TO_LABEL = {index: label for label, index in LABEL_TO_ID.items()}
 ModelType = Literal["lstm", "transformer"]
 SamplingStrategy = Literal["natural", "class_balanced"]
 Device = Literal["auto", "cpu", "cuda"]
+ProgressBackend = Literal["auto", "notebook", "terminal"]
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class FitFixedParams:
     num_workers: int = 0
     pin_memory: bool = False
     use_tqdm: bool = True
+    progress_backend: ProgressBackend = "terminal"
+    verbose: bool = True
     log_every: int = 20
 
 

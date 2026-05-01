@@ -1,14 +1,15 @@
 from typing import Any
 import subprocess
+import time
 import warnings
 
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
 
 from .config import Device, FitFixedParams
+from .progress import progress_bar, stage
 
 
 def pytorch_supported_cuda_arches() -> list[int]:
@@ -76,17 +77,13 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
-    use_tqdm: bool = True,
-    description: str = "train",
 ) -> dict[str, float]:
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    batches = tqdm(loader, desc=description, leave=False) if use_tqdm else loader
-
-    for features, labels in batches:
+    for features, labels in loader:
         features, labels = features.to(device), labels.to(device)
         optimizer.zero_grad()
         logits = model(features)
@@ -98,12 +95,6 @@ def train_one_epoch(
         correct += (logits.argmax(dim=1) == labels).sum().item()
         total += labels.size(0)
 
-        if use_tqdm:
-            batches.set_postfix(
-                loss=f"{total_loss / total:.4f}",
-                acc=f"{correct / total:.4f}",
-            )
-
     return {"loss": total_loss / total, "accuracy": correct / total}
 
 
@@ -112,8 +103,6 @@ def evaluate(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    use_tqdm: bool = False,
-    description: str = "eval",
 ) -> dict[str, Any]:
     model.eval()
     total_loss = 0.0
@@ -123,9 +112,7 @@ def evaluate(
     targets = []
 
     with torch.no_grad():
-        batches = tqdm(loader, desc=description, leave=False) if use_tqdm else loader
-
-        for features, labels in batches:
+        for features, labels in loader:
             features, labels = features.to(device), labels.to(device)
             logits = model(features)
             loss = criterion(logits, labels)
@@ -136,12 +123,6 @@ def evaluate(
             total += labels.size(0)
             predictions.extend(predicted.cpu().tolist())
             targets.extend(labels.cpu().tolist())
-
-            if use_tqdm:
-                batches.set_postfix(
-                    loss=f"{total_loss / total:.4f}",
-                    acc=f"{correct / total:.4f}",
-                )
 
     return {
         "loss": total_loss / total,
@@ -159,6 +140,7 @@ def fit_model(
     fixed_params: FitFixedParams,
 ) -> tuple[list[dict[str, float]], dict[str, Any]]:
     device = resolve_device(fixed_params.device)
+    stage(f"Using device: {device}", enabled=fixed_params.verbose)
     model = model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(
@@ -168,23 +150,28 @@ def fit_model(
     )
 
     history = []
-    for epoch in range(1, fit_params["epochs"] + 1):
+    start_time = time.perf_counter()
+    epochs = progress_bar(
+        range(1, fit_params["epochs"] + 1),
+        enabled=fixed_params.use_tqdm,
+        backend=fixed_params.progress_backend,
+        description="Training",
+        leave=True,
+    )
+
+    for epoch in epochs:
         train_metrics = train_one_epoch(
             model,
             train_loader,
             criterion,
             optimizer,
             device,
-            use_tqdm=fixed_params.use_tqdm,
-            description=f"epoch {epoch}/{fit_params['epochs']} train",
         )
         test_metrics = evaluate(
             model,
             test_loader,
             criterion,
             device,
-            use_tqdm=fixed_params.use_tqdm,
-            description=f"epoch {epoch}/{fit_params['epochs']} test",
         )
         history.append(
             {
@@ -196,14 +183,22 @@ def fit_model(
             }
         )
 
+        if fixed_params.use_tqdm:
+            epochs.set_postfix(
+                loss=f"{train_metrics['loss']:.4f}",
+                acc=f"{test_metrics['accuracy']:.4f}",
+                lr=f"{optimizer.param_groups[0]['lr']:.6g}",
+                refresh=False,
+            )
+
     final_metrics = evaluate(
         model,
         test_loader,
         criterion,
         device,
-        use_tqdm=fixed_params.use_tqdm,
-        description="final test",
     )
+    elapsed = time.perf_counter() - start_time
+    stage(f"Training finished in {elapsed:.2f} seconds", enabled=fixed_params.verbose)
     return history, final_metrics
 
 
