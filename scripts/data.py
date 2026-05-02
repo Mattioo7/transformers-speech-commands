@@ -1,7 +1,9 @@
 from pathlib import Path
 from dataclasses import dataclass
 import math
+import wave
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
@@ -163,6 +165,23 @@ def pad_or_trim(waveform: torch.Tensor, target_length: int, segment_index: int =
     return waveform[start : start + target_length]
 
 
+def load_audio(path: Path) -> tuple[torch.Tensor, int]:
+    with wave.open(str(path), "rb") as wav:
+        channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+        sample_rate = wav.getframerate()
+        frames = wav.readframes(wav.getnframes())
+
+    if sample_width != 2:
+        raise ValueError(f"Expected 16-bit PCM WAV, got {sample_width * 8}-bit audio: {path}")
+
+    samples = np.frombuffer(frames, dtype="<i2").astype("float32") / 32768.0
+    if channels > 1:
+        samples = samples.reshape(-1, channels).mean(axis=1)
+
+    return torch.from_numpy(samples), sample_rate
+
+
 class SpeechCommandsDataset(Dataset):
     def __init__(
         self,
@@ -190,8 +209,7 @@ class SpeechCommandsDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         row = self.manifest.iloc[index]
-        waveform, sample_rate = torchaudio.load(self.local_paths[row.archive_path])
-        waveform = waveform.mean(dim=0)
+        waveform, sample_rate = load_audio(self.local_paths[row.archive_path])
 
         if sample_rate != self.data_params.sample_rate:
             waveform = torchaudio.functional.resample(waveform, sample_rate, self.data_params.sample_rate)
