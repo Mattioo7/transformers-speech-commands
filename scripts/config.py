@@ -22,6 +22,7 @@ class DataFixedParams:
     train_archive: str = "train.7z"
     cache_dir: str = ".cache/audio"
     reuse_cached_dataset: bool = False
+    clear_cache_after_experiment: bool = True
     output_dir: str = "reports/models"
     target_labels: tuple[str, ...] = TARGET_LABEL_ORDER
     unknown_label: str = UNKNOWN_LABEL

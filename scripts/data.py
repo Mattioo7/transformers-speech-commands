@@ -2,6 +2,7 @@ from pathlib import Path
 from collections.abc import Iterable
 from dataclasses import dataclass
 import math
+import shutil
 import wave
 from typing import TypeVar
 
@@ -322,6 +323,31 @@ def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFi
         test_manifest=test_manifest,
         local_paths=local_paths,
     )
+
+
+def experiment_cache_dir(experiment) -> Path:
+    return Path(experiment.data_fixed.cache_dir) / experiment.name
+
+
+def clear_experiment_cache(experiment) -> bool:
+    if not experiment.name:
+        raise ValueError("Experiment name is required before clearing cache.")
+
+    cache_root = Path(experiment.data_fixed.cache_dir).resolve()
+    cache_dir = experiment_cache_dir(experiment).resolve()
+    try:
+        cache_dir.relative_to(cache_root)
+    except ValueError as error:
+        raise RuntimeError(f"Refusing to clear cache outside cache root: {cache_dir}") from error
+
+    if cache_dir == cache_root:
+        raise RuntimeError(f"Refusing to clear cache root directly: {cache_root}")
+
+    if not cache_dir.exists():
+        return False
+
+    shutil.rmtree(cache_dir)
+    return True
 
 
 def build_datasets_from_prepared_files(experiment, prepared_files: PreparedDataFiles) -> PreparedData:

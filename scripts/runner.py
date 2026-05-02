@@ -10,6 +10,7 @@ from .data import (
     PreparedData,
     PreparedDataFiles,
     build_datasets_from_prepared_files,
+    clear_experiment_cache,
     make_dataloaders,
     prepare_experiment_data_files,
 )
@@ -165,21 +166,31 @@ def train_experiment(
     prepared_files_by_key: dict[tuple[tuple[str, Any], ...], PreparedDataFiles] | None = None,
 ) -> pd.DataFrame:
     stage(f"Starting experiment: {experiment.name}", enabled=experiment.fit_fixed.verbose)
-    runs = expand_experiment_grid(experiment)
-    if prepared_files_by_key is None:
-        prepared_files_by_key = prepare_data_files_for_runs(experiment, runs)
+    try:
+        runs = expand_experiment_grid(experiment)
+        if prepared_files_by_key is None:
+            prepared_files_by_key = prepare_data_files_for_runs(experiment, runs)
 
-    prepared_data_by_key = build_data_for_runs(experiment, prepared_files_by_key)
-    results = [
-        run_single_config(experiment, run, prepared_data_by_key[data_key(run)], index, len(runs))
-        for index, run in enumerate(runs, start=1)
-    ]
-    summary = pd.DataFrame(results)
-    output_dir = Path(experiment.data_fixed.output_dir) / experiment.name
-    output_dir.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(output_dir / "experiment_summary.csv", index=False)
-    stage(f"\nExperiment finished | total runs = {len(runs)}", enabled=experiment.fit_fixed.verbose)
-    return summary
+        prepared_data_by_key = build_data_for_runs(experiment, prepared_files_by_key)
+        results = [
+            run_single_config(experiment, run, prepared_data_by_key[data_key(run)], index, len(runs))
+            for index, run in enumerate(runs, start=1)
+        ]
+        summary = pd.DataFrame(results)
+        output_dir = Path(experiment.data_fixed.output_dir) / experiment.name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary.to_csv(output_dir / "experiment_summary.csv", index=False)
+        stage(f"\nExperiment finished | total runs = {len(runs)}", enabled=experiment.fit_fixed.verbose)
+        return summary
+    finally:
+        if experiment.data_fixed.clear_cache_after_experiment:
+            try:
+                cleared = clear_experiment_cache(experiment)
+            except Exception as error:
+                message = f"Could not clear experiment cache: {error}"
+            else:
+                message = "Cleared experiment cache." if cleared else "Experiment cache already empty."
+            stage(message, enabled=experiment.fit_fixed.verbose)
 
 
 def run_experiment(experiment: Experiment) -> pd.DataFrame:
