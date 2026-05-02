@@ -75,7 +75,7 @@ class FitFixedParams:
     verbose: bool = True
     log_every: int = 10
     early_stopping: bool = True
-    early_stopping_patience: int = 5
+    early_stopping_patience: int = 3
     early_stopping_min_delta: float = 0.0
 
 
