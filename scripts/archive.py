@@ -98,28 +98,35 @@ def extract_archive_files(
     paths: list[Path],
     output_dir: Path,
     *,
+    reuse_existing: bool = False,
     progress: Callable[[Iterable[T]], Iterable[T]] | None = None,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     unique_paths = list(dict.fromkeys(paths))
+    paths_to_extract = unique_paths
+    if reuse_existing:
+        paths_to_extract = [path for path in unique_paths if not (output_dir / path).exists()]
+        if not paths_to_extract:
+            return {str(path): output_dir / path for path in unique_paths}
+
     command = _archive_command(preferred="7z")
     progress = progress or (lambda iterable: iterable)
 
     if command == "7z":
         base_args = ["7z", "x", "-y", str(archive), f"-o{output_dir}"]
-        if len(unique_paths) > 5_000:
+        if not reuse_existing and len(paths_to_extract) > 5_000:
             for batch in progress([["train/audio"]]):
                 subprocess.run(base_args + batch, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            batches = _argument_batches(base_args, [str(path) for path in unique_paths])
+            batches = _argument_batches(base_args, [str(path) for path in paths_to_extract])
             for batch in progress(batches):
                 subprocess.run(base_args + batch, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         base_args = ["tar", "-xf", str(archive), "-C", str(output_dir)]
-        if len(unique_paths) > 5_000:
+        if not reuse_existing and len(paths_to_extract) > 5_000:
             archive_paths = ["train/audio"]
         else:
-            archive_paths = [str(path).replace("\\", "/") for path in unique_paths]
+            archive_paths = [str(path).replace("\\", "/") for path in paths_to_extract]
 
         batches = _argument_batches(base_args, archive_paths)
         for batch in progress(batches):

@@ -302,6 +302,7 @@ def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFi
         archive,
         [Path(path) for path in manifest["archive_path"]],
         cache_dir,
+        reuse_existing=data_params.reuse_cached_dataset,
         progress=progress_wrapper(
             enabled=experiment.fit_fixed.use_tqdm,
             backend=experiment.fit_fixed.progress_backend,
