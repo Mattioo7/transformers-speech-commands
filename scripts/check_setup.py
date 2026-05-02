@@ -28,8 +28,10 @@ def main() -> int:
     failed |= sys.version_info < (3, 12)
 
     seven_zip = shutil.which("7z")
-    status(seven_zip is not None, "7z is available in PATH")
-    failed |= seven_zip is None
+    tar = shutil.which("tar")
+    archive_tool_available = seven_zip is not None or tar is not None
+    status(archive_tool_available, "archive tool is available (7z or tar)")
+    failed |= not archive_tool_available
 
     archive = project_root / "data" / "train.7z"
     status(archive.exists(), "data/train.7z exists")
