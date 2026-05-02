@@ -20,8 +20,8 @@ ProgressBackend = Literal["auto", "notebook", "terminal"]
 class DataFixedParams:
     data_dir: str = "data"
     train_archive: str = "train.7z"
-    cache_dir: str = ".cache/baseline_audio"
-    output_dir: str = "reports/02_baseline_models"
+    cache_dir: str = ".cache/audio"
+    output_dir: str = "reports/models"
     target_labels: tuple[str, ...] = TARGET_LABEL_ORDER
     unknown_label: str = UNKNOWN_LABEL
     silence_label: str = SILENCE_LABEL
@@ -72,15 +72,15 @@ class FitFixedParams:
     use_tqdm: bool = True
     progress_backend: ProgressBackend = "terminal"
     verbose: bool = True
-    log_every: int = 20
+    log_every: int = 10
     early_stopping: bool = True
-    early_stopping_patience: int = 3
+    early_stopping_patience: int = 5
     early_stopping_min_delta: float = 0.0
 
 
 @dataclass(frozen=True)
 class FitGridParams:
-    epochs: int | list[int] = 5
+    epochs: int | list[int] = 10
     batch_size: int | list[int] = 64
     learning_rate: float | list[float] = 1e-3
     weight_decay: float | list[float] = 1e-4
