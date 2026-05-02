@@ -66,7 +66,7 @@ class ModelGridParams:
 
 @dataclass(frozen=True)
 class FitFixedParams:
-    device: Device = "cpu"
+    device: Device = "cuda"
     num_workers: int = 0
     pin_memory: bool = False
     use_tqdm: bool = True
