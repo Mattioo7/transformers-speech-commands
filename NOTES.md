@@ -1,0 +1,2 @@
+- w 03 jeśli "train_fraction": 0.5 to 1 epoch trwa 1 min x 10 epochs x 50 exp = 500 min = ok 8h
+- 
