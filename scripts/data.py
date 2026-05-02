@@ -1,7 +1,9 @@
 from pathlib import Path
+from collections.abc import Iterable
 from dataclasses import dataclass
 import math
 import wave
+from typing import TypeVar
 
 import numpy as np
 import pandas as pd
@@ -10,7 +12,10 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 import torchaudio
 
 from .archive import archive_files, archive_lines, extract_archive_files
-from .config import DataFixedParams, FeatureFixedParams, LABEL_TO_ID, UNKNOWN_LABEL
+from .config import DataFixedParams, FeatureFixedParams, LABEL_TO_ID, ProgressBackend, UNKNOWN_LABEL
+from .progress import progress_bar
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -44,13 +49,44 @@ def speaker_id(path: Path) -> str:
     return path.name.split("_nohash_", 1)[0]
 
 
-def build_command_manifest(data_params: DataFixedParams) -> pd.DataFrame:
+def progress_wrapper(
+    *,
+    enabled: bool,
+    backend: ProgressBackend,
+    description: str,
+    leave: bool = False,
+):
+    def wrap(iterable: Iterable[T]) -> Iterable[T]:
+        return progress_bar(
+            iterable,
+            enabled=enabled,
+            backend=backend,
+            description=description,
+            leave=leave,
+        )
+
+    return wrap
+
+
+def build_command_manifest(
+    data_params: DataFixedParams,
+    *,
+    use_tqdm: bool = False,
+    progress_backend: ProgressBackend = "terminal",
+) -> pd.DataFrame:
     archive = Path(data_params.data_dir) / data_params.train_archive
     validation_paths = archive_lines(archive, "train/validation_list.txt")
     testing_paths = archive_lines(archive, "train/testing_list.txt")
 
     rows = []
-    for archive_path in archive_files(archive):
+    files = archive_files(archive)
+    for archive_path in progress_bar(
+        files,
+        enabled=use_tqdm,
+        backend=progress_backend,
+        description="Scanning archive",
+        leave=True,
+    ):
         label = train_audio_label(archive_path)
         if label is None or label == "_background_noise_":
             continue
@@ -88,15 +124,32 @@ def background_noise_paths(data_params: DataFixedParams) -> list[Path]:
 def add_silence_examples(
     manifest: pd.DataFrame,
     data_params: DataFixedParams,
-    examples_per_split: int,
+    total_examples: int,
 ) -> pd.DataFrame:
-    if not data_params.include_silence or examples_per_split <= 0:
+    if not data_params.include_silence or total_examples <= 0:
         return manifest
 
     noise_paths = background_noise_paths(data_params)
+    if not noise_paths:
+        raise ValueError("No background noise WAV files found for silence examples.")
+
+    splits = ("train", "validation", "test")
+    split_counts = manifest["split"].value_counts().reindex(splits, fill_value=0)
+    if split_counts.sum() > 0:
+        split_weights = split_counts / split_counts.sum()
+    else:
+        split_weights = pd.Series(1 / len(splits), index=splits)
+    raw_allocations = split_weights * total_examples
+    allocations = raw_allocations.apply(math.floor).astype(int)
+    remaining = total_examples - int(allocations.sum())
+    if remaining:
+        remainders = (raw_allocations - allocations).sort_values(ascending=False)
+        for split in remainders.index[:remaining]:
+            allocations[split] += 1
+
     rows = []
-    for split in ("train", "validation", "test"):
-        for index in range(examples_per_split):
+    for split in splits:
+        for index in range(int(allocations[split])):
             path = noise_paths[index % len(noise_paths)]
             rows.append(
                 {
@@ -124,7 +177,7 @@ def sample_split(
     sampled = []
 
     for label, group in split_data.groupby("label", sort=False):
-        label_fraction = unknown_fraction if label == UNKNOWN_LABEL else fraction
+        label_fraction = fraction * unknown_fraction if label == UNKNOWN_LABEL else fraction
         if label_fraction >= 1.0:
             sampled.append(group)
             continue
@@ -141,11 +194,17 @@ def build_experiment_manifest(
     validation_fraction: float,
     test_fraction: float,
     unknown_fraction: float,
-    silence_examples_per_split: int,
+    silence_samples: int,
     seed: int,
+    use_tqdm: bool = False,
+    progress_backend: ProgressBackend = "terminal",
 ) -> pd.DataFrame:
-    manifest = build_command_manifest(data_params)
-    manifest = add_silence_examples(manifest, data_params, silence_examples_per_split)
+    manifest = build_command_manifest(
+        data_params,
+        use_tqdm=use_tqdm,
+        progress_backend=progress_backend,
+    )
+    manifest = add_silence_examples(manifest, data_params, silence_samples)
 
     train_manifest = sample_split(manifest, "train", train_fraction, unknown_fraction, seed)
     validation_manifest = sample_split(manifest, "validation", validation_fraction, unknown_fraction, seed)
@@ -231,13 +290,25 @@ def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFi
         validation_fraction=data_grid["validation_fraction"],
         test_fraction=data_grid["test_fraction"],
         unknown_fraction=data_grid["unknown_fraction"],
-        silence_examples_per_split=data_grid["silence_examples_per_split"],
+        silence_samples=data_grid["silence_samples"],
         seed=data_grid["seed"],
+        use_tqdm=experiment.fit_fixed.use_tqdm,
+        progress_backend=experiment.fit_fixed.progress_backend,
     )
 
     archive = Path(data_params.data_dir) / data_params.train_archive
     cache_dir = Path(data_params.cache_dir) / experiment.name
-    local_paths = extract_archive_files(archive, [Path(path) for path in manifest["archive_path"]], cache_dir)
+    local_paths = extract_archive_files(
+        archive,
+        [Path(path) for path in manifest["archive_path"]],
+        cache_dir,
+        progress=progress_wrapper(
+            enabled=experiment.fit_fixed.use_tqdm,
+            backend=experiment.fit_fixed.progress_backend,
+            description="Extracting archive",
+            leave=True,
+        ),
+    )
 
     train_manifest = manifest[manifest["split"] == "train"]
     validation_manifest = manifest[manifest["split"] == "validation"]

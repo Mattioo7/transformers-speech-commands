@@ -36,7 +36,7 @@ class DataGridParams:
     validation_fraction: float | list[float] = 1.0
     test_fraction: float | list[float] = 1.0
     unknown_fraction: float | list[float] = 1.0
-    silence_examples_per_split: int | list[int] = 2_000
+    silence_samples: int | list[int] = 2_000
     sampling_strategy: SamplingStrategy | list[SamplingStrategy] = "natural"
     seed: int | list[int] = 42
 

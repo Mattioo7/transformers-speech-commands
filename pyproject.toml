@@ -8,7 +8,16 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
-    "torch>=2.3",
-    "torchaudio>=2.11.0",
+    "torch==2.11.0+cu130",
+    "torchaudio==2.11.0+cu130",
     "tqdm>=4.67.3",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
