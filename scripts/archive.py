@@ -3,6 +3,9 @@ import subprocess
 from pathlib import Path
 
 
+MAX_COMMAND_LENGTH = 24_000
+
+
 def _archive_command(preferred: str | None = None) -> str:
     if preferred:
         command = shutil.which(preferred)
@@ -66,23 +69,47 @@ def archive_lines(archive: Path, file_name: str) -> set[Path]:
     return {Path(line) for line in result.stdout.splitlines() if line}
 
 
+def _argument_batches(prefix: list[str], arguments: list[str], max_length: int = MAX_COMMAND_LENGTH) -> list[list[str]]:
+    batches = []
+    batch = []
+    length = sum(len(arg) + 3 for arg in prefix)
+
+    for argument in arguments:
+        argument_length = len(argument) + 3
+        if batch and length + argument_length > max_length:
+            batches.append(batch)
+            batch = []
+            length = sum(len(arg) + 3 for arg in prefix)
+
+        batch.append(argument)
+        length += argument_length
+
+    if batch:
+        batches.append(batch)
+
+    return batches
+
+
 def extract_archive_files(archive: Path, paths: list[Path], output_dir: Path) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     unique_paths = list(dict.fromkeys(paths))
     command = _archive_command(preferred="7z")
 
     if command == "7z":
+        base_args = ["7z", "x", "-y", str(archive), f"-o{output_dir}"]
         if len(unique_paths) > 5_000:
-            args = ["7z", "x", "-y", str(archive), f"-o{output_dir}", "train/audio"]
+            subprocess.run(base_args + ["train/audio"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            args = ["7z", "x", "-y", str(archive), f"-o{output_dir}"] + [str(path) for path in unique_paths]
+            for batch in _argument_batches(base_args, [str(path) for path in unique_paths]):
+                subprocess.run(base_args + batch, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
+        base_args = ["tar", "-xf", str(archive), "-C", str(output_dir)]
         if len(unique_paths) > 5_000:
             archive_paths = ["train/audio"]
         else:
             archive_paths = [str(path).replace("\\", "/") for path in unique_paths]
 
-        args = ["tar", "-xf", str(archive), "-C", str(output_dir)] + archive_paths
+        for batch in _argument_batches(base_args, archive_paths):
+            subprocess.run(base_args + batch, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {str(path): output_dir / path for path in unique_paths}
