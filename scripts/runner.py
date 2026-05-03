@@ -10,9 +10,11 @@ from .data import (
     PreparedData,
     PreparedDataFiles,
     build_datasets_from_prepared_files,
+    build_experiment_manifest_for_grid,
     clear_experiment_cache,
+    extract_experiment_audio_files,
     make_dataloaders,
-    prepare_experiment_data_files,
+    prepared_data_files_from_manifest,
 )
 from .models import build_model
 from .outputs import output_paths, run_name, save_confusion_matrix_plot, save_history_plot, save_json
@@ -79,13 +81,35 @@ def prepare_data_files_for_runs(
             data_configs.append(run["data"])
 
     stage("\nBuilding dataset", enabled=experiment.fit_fixed.verbose)
+    manifests_by_key = {}
     for index, data_config in enumerate(data_configs, start=1):
         if len(data_configs) > 1:
             stage(f"DATA configuration {index}/{len(data_configs)}", enabled=experiment.fit_fixed.verbose)
 
         data_run = {"data": data_config}
-        prepared_files = prepare_experiment_data_files(experiment, data_config)
-        prepared[data_key(data_run)] = prepared_files
+        key = data_key(data_run)
+        manifest = build_experiment_manifest_for_grid(experiment, data_config)
+        manifests_by_key[key] = manifest
+
+    if len(data_configs) == 1:
+        key = next(iter(manifests_by_key))
+        manifest = manifests_by_key[key]
+        local_paths = extract_experiment_audio_files(experiment, manifest["archive_path"])
+        prepared_files = prepared_data_files_from_manifest(manifest, local_paths)
+        prepared[key] = prepared_files
+        stage(split_summary(prepared_files.manifest), enabled=experiment.fit_fixed.verbose)
+        return prepared
+
+    all_archive_paths = [
+        archive_path
+        for manifest in manifests_by_key.values()
+        for archive_path in manifest["archive_path"]
+    ]
+    local_paths = extract_experiment_audio_files(experiment, all_archive_paths)
+
+    for key, manifest in manifests_by_key.items():
+        prepared_files = prepared_data_files_from_manifest(manifest, local_paths)
+        prepared[key] = prepared_files
         stage(split_summary(prepared_files.manifest), enabled=experiment.fit_fixed.verbose)
 
     return prepared

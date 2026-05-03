@@ -283,9 +283,9 @@ class SpeechCommandsDataset(Dataset):
         return features, torch.tensor(LABEL_TO_ID[row.label], dtype=torch.long)
 
 
-def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFiles:
+def build_experiment_manifest_for_grid(experiment, data_grid: dict) -> pd.DataFrame:
     data_params = experiment.data_fixed
-    manifest = build_experiment_manifest(
+    return build_experiment_manifest(
         data_params=data_params,
         train_fraction=data_grid["train_fraction"],
         validation_fraction=data_grid["validation_fraction"],
@@ -297,13 +297,21 @@ def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFi
         progress_backend=experiment.fit_fixed.progress_backend,
     )
 
+
+def extract_experiment_audio_files(
+    experiment,
+    archive_paths: Iterable[str | Path],
+    *,
+    reuse_existing: bool | None = None,
+) -> dict[str, Path]:
+    data_params = experiment.data_fixed
     archive = Path(data_params.data_dir) / data_params.train_archive
     cache_dir = Path(data_params.cache_dir) / experiment.name
-    local_paths = extract_archive_files(
+    return extract_archive_files(
         archive,
-        [Path(path) for path in manifest["archive_path"]],
+        [Path(path) for path in archive_paths],
         cache_dir,
-        reuse_existing=data_params.reuse_cached_dataset,
+        reuse_existing=data_params.reuse_cached_dataset if reuse_existing is None else reuse_existing,
         progress=progress_wrapper(
             enabled=experiment.fit_fixed.use_tqdm,
             backend=experiment.fit_fixed.progress_backend,
@@ -312,6 +320,11 @@ def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFi
         ),
     )
 
+
+def prepared_data_files_from_manifest(
+    manifest: pd.DataFrame,
+    local_paths: dict[str, Path],
+) -> PreparedDataFiles:
     train_manifest = manifest[manifest["split"] == "train"]
     validation_manifest = manifest[manifest["split"] == "validation"]
     test_manifest = manifest[manifest["split"] == "test"]
@@ -323,6 +336,12 @@ def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFi
         test_manifest=test_manifest,
         local_paths=local_paths,
     )
+
+
+def prepare_experiment_data_files(experiment, data_grid: dict) -> PreparedDataFiles:
+    manifest = build_experiment_manifest_for_grid(experiment, data_grid)
+    local_paths = extract_experiment_audio_files(experiment, manifest["archive_path"])
+    return prepared_data_files_from_manifest(manifest, local_paths)
 
 
 def experiment_cache_dir(experiment) -> Path:
